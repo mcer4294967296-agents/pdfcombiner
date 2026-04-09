@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Combiner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+        :root {
+            --bg-primary: #07080d;
+            --bg-secondary: #0f1117;
+            --bg-card: rgba(255,255,255,0.025);
+            --bg-card-hover: rgba(255,255,255,0.045);
+            --bg-input: rgba(255,255,255,0.055);
+            --border: rgba(255,255,255,0.07);
+            --border-hover: rgba(255,255,255,0.14);
+            --text-1: #e2e8f0;
+            --text-2: #94a3b8;
+            --text-3: #4b5563;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99,102,241,0.12);
+            --gradient: linear-gradient(135deg, #6366f1, #8b5cf6);
+            --danger: #ef4444;
+            --danger-bg: rgba(239,68,68,0.1);
+            --radius: 14px;
+            --radius-sm: 8px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-1);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Header ────────────────────────────────── */
+        header {
+            width: 100%;
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+            backdrop-filter: blur(12px);
+        }
+        .logo {
+            width: 38px; height: 38px;
+            border-radius: 10px;
+            background: var(--gradient);
+            display: grid; place-items: center;
+            font-size: 18px;
+            box-shadow: 0 2px 16px rgba(99,102,241,0.25);
+        }
+        header h1 { font-size: 19px; font-weight: 600; letter-spacing: -0.025em; }
+        .subtitle { color: var(--text-3); font-size: 13px; margin-left: auto; }
+
+        /* ── Main ──────────────────────────────────── */
+        main {
+            width: 100%; max-width: 740px;
+            padding: 32px 20px 80px;
+            display: flex; flex-direction: column; gap: 20px;
+        }
+
+        /* ── Drop zone ─────────────────────────────── */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 44px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: var(--bg-card);
+        }
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+        }
+        .drop-zone .dz-icon { font-size: 34px; margin-bottom: 10px; opacity: 0.85; }
+        .drop-zone .dz-label { font-size: 15px; font-weight: 500; }
+        .drop-zone .dz-hint  { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+        .drop-zone input[type="file"] { display: none; }
+
+        /* ── PDF list ──────────────────────────────── */
+        #pdfList { display: flex; flex-direction: column; gap: 10px; }
+
+        /* ── PDF card ──────────────────────────────── */
+        .pdf-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            display: flex; flex-direction: column; gap: 10px;
+            transition: border-color 0.2s, background 0.2s;
+            animation: slideIn 0.3s ease;
+        }
+        .pdf-card:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+        .pdf-card.sortable-ghost { opacity: 0.35; }
+        .pdf-card.sortable-chosen { border-color: var(--accent); }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .card-header { display: flex; align-items: center; gap: 12px; }
+
+        .drag-handle {
+            cursor: grab; color: var(--text-3); font-size: 16px;
+            padding: 4px; user-select: none; transition: color 0.15s;
+        }
+        .drag-handle:hover { color: var(--text-2); }
+        .drag-handle:active { cursor: grabbing; }
+
+        .pdf-icon {
+            width: 36px; height: 36px; border-radius: var(--radius-sm);
+            background: rgba(239,68,68,0.08);
+            display: grid; place-items: center;
+            font-size: 11px; font-weight: 700; color: #f87171; flex-shrink: 0;
+            letter-spacing: 0.03em;
+        }
+
+        .pdf-info { flex: 1; min-width: 0; }
+        .pdf-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .pdf-meta { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+
+        .remove-btn {
+            width: 28px; height: 28px; border-radius: 6px; border: none;
+            background: transparent; color: var(--text-3); font-size: 15px;
+            cursor: pointer; display: grid; place-items: center; transition: all 0.15s;
+        }
+        .remove-btn:hover { background: var(--danger-bg); color: var(--danger); }
+
+        /* ── Page spec ─────────────────────────────── */
+        .page-spec-row { display: flex; align-items: center; gap: 8px; padding-left: 42px; }
+        .page-spec-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+        .page-spec-input {
+            flex: 1;
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: 6px; padding: 6px 10px;
+            font-family: 'Inter', sans-serif; font-size: 13px;
+            color: var(--text-1); outline: none;
+            transition: border-color 0.15s;
+        }
+        .page-spec-input::placeholder { color: var(--text-3); }
+        .page-spec-input:focus { border-color: var(--accent); }
+        .page-spec-input.error { border-color: var(--danger); }
+
+        /* ── Thumbnail strip ───────────────────────── */
+        .thumb-strip {
+            display: flex; gap: 5px; padding: 2px 0 0 42px;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+        .thumb-strip::-webkit-scrollbar { height: 4px; }
+        .thumb-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .page-thumb {
+            width: 48px; height: 64px; border-radius: 4px;
+            border: 1.5px solid var(--border);
+            background: #1a1a2e; flex-shrink: 0;
+            position: relative; cursor: pointer;
+            transition: all 0.15s; overflow: hidden;
+            display: grid; place-items: center;
+        }
+        .page-thumb canvas { width: 100%; height: 100%; display: block; }
+        .page-thumb .pn {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: rgba(0,0,0,0.65); color: #fff;
+            font-size: 9px; text-align: center; padding: 1px 0; font-weight: 500;
+        }
+        .page-thumb.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .page-thumb:hover { border-color: var(--accent-light); }
+        .page-thumb .pn-only {
+            font-size: 13px; font-weight: 600; color: var(--text-2);
+        }
+
+        /* ── Combine section ───────────────────────── */
+        .combine-section {
+            display: flex; flex-direction: column; align-items: center; gap: 8px;
+            padding: 20px 0;
+        }
+        .combine-btn {
+            background: var(--gradient); color: #fff; border: none;
+            border-radius: var(--radius-sm); padding: 14px 44px;
+            font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s; letter-spacing: -0.01em;
+            box-shadow: 0 2px 16px rgba(99,102,241,0.3);
+        }
+        .combine-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(99,102,241,0.4);
+        }
+        .combine-btn:active:not(:disabled) { transform: translateY(0); }
+        .combine-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .combine-summary { font-size: 13px; color: var(--text-3); }
+
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.55s linear infinite;
+            display: inline-block; vertical-align: middle; margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Toast ─────────────────────────────────── */
+        .toast {
+            position: fixed; bottom: 24px; left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            background: var(--bg-secondary); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 10px 20px;
+            font-size: 13px; box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+            opacity: 0; transition: all 0.3s ease; z-index: 100;
+        }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .toast.error { border-color: var(--danger); color: #fca5a5; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">⬡</div>
+        <h1>PDF Combiner</h1>
+        <span class="subtitle">Drag · reorder · combine</span>
+    </header>
+
+    <main>
+        <div class="drop-zone" id="dropZone">
+            <div class="dz-icon">📄</div>
+            <div class="dz-label">Drop PDF files here, or click to browse</div>
+            <div class="dz-hint">You can add the same file multiple times</div>
+            <input type="file" id="fileInput" multiple accept=".pdf">
+        </div>
+        <div id="pdfList"></div>
+        <div class="combine-section" id="combineSection" style="display:none">
+            <button class="combine-btn" id="combineBtn">Combine &amp; Download</button>
+            <div class="combine-summary" id="combineSummary"></div>
+        </div>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ── PDF.js setup ──────────────────────────────────────────────────
+    if (typeof pdfjsLib !== 'undefined') {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    // ── State & DOM refs ──────────────────────────────────────────────
+    const cards = [];
+    const $ = id => document.getElementById(id);
+    const dropZone = $('dropZone'), fileInput = $('fileInput'),
+          pdfList = $('pdfList'), combineSection = $('combineSection'),
+          combineBtn = $('combineBtn'), combineSummary = $('combineSummary'),
+          toastEl = $('toast');
+
+    // ── Heartbeat ─────────────────────────────────────────────────────
+    setInterval(() => fetch('/api/heartbeat').catch(()=>{}), 4000);
+
+    // ── Toast ─────────────────────────────────────────────────────────
+    let toastTimer;
+    function toast(msg, isError) {
+        toastEl.textContent = msg;
+        toastEl.className = 'toast show' + (isError ? ' error' : '');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.className = 'toast', 3000);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function parseSpec(spec, total) {
+        const pages = new Set();
+        if (!spec.trim()) { for (let i = 1; i <= total; i++) pages.add(i); return pages; }
+        for (const tok of spec.split(',')) {
+            const t = tok.trim(); if (!t) continue;
+            const m = t.match(/^(\d+)\s*-\s*(\d+)$/);
+            if (m) {
+                let s = +m[1], e = +m[2];
+                if (s <= e) { for (let i = s; i <= e; i++) pages.add(i); }
+                else        { for (let i = s; i >= e; i--) pages.add(i); }
+            } else { pages.add(+t); }
+        }
+        return pages;
+    }
+
+    function countSpec(spec, total) {
+        const s = spec.trim();
+        if (!s) return total;
+        // count pages the spec produces (including duplicates from order)
+        let n = 0;
+        for (const tok of s.split(',')) {
+            const t = tok.trim(); if (!t) continue;
+            const m = t.match(/^(\d+)\s*-\s*(\d+)$/);
+            if (m) { n += Math.abs(+m[2] - +m[1]) + 1; }
+            else { n++; }
+        }
+        return n;
+    }
+
+    function validateInput(input) {
+        const val = input.value.trim(), total = +input.dataset.total;
+        if (!val) { input.classList.remove('error'); return true; }
+        try {
+            for (const tok of val.split(',')) {
+                const t = tok.trim(); if (!t) continue;
+                const m = t.match(/^(\d+)\s*-\s*(\d+)$/);
+                if (m) {
+                    if (+m[1] < 1 || +m[2] < 1 || +m[1] > total || +m[2] > total) throw 0;
+                } else {
+                    const p = +t; if (isNaN(p) || p < 1 || p > total) throw 0;
+                }
+            }
+            input.classList.remove('error'); return true;
+        } catch { input.classList.add('error'); return false; }
+    }
+
+    // ── Drop zone ─────────────────────────────────────────────────────
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', e => { handleFiles(e.target.files); fileInput.value = ''; });
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault(); dropZone.classList.remove('drag-over');
+        handleFiles(e.dataTransfer.files);
+    });
+
+    async function handleFiles(files) {
+        for (const file of files) {
+            if (!file.name.toLowerCase().endsWith('.pdf')) { toast(file.name + ' is not a PDF', true); continue; }
+            try {
+                const r = await fetch('/api/upload?name=' + encodeURIComponent(file.name), {method:'POST', body:file});
+                const data = await r.json();
+                if (data.error) { toast(data.error, true); continue; }
+                addCard(data);
+            } catch { toast('Upload failed: ' + file.name, true); }
+        }
+    }
+
+    // ── Card management ───────────────────────────────────────────────
+    function addCard(data) {
+        const card = document.createElement('div');
+        card.className = 'pdf-card';
+        card.dataset.id = data.id;
+        card.innerHTML = `
+            <div class="card-header">
+                <div class="drag-handle" title="Drag to reorder">⠿</div>
+                <div class="pdf-icon">PDF</div>
+                <div class="pdf-info">
+                    <div class="pdf-name">${esc(data.name)}</div>
+                    <div class="pdf-meta">${data.num_pages} page${data.num_pages!==1?'s':''}</div>
+                </div>
+                <button class="remove-btn" title="Remove">✕</button>
+            </div>
+            <div class="page-spec-row">
+                <span class="page-spec-label">Pages:</span>
+                <input type="text" class="page-spec-input"
+                       placeholder="all pages (e.g. 1,3-5,8)"
+                       data-total="${data.num_pages}">
+            </div>
+            <div class="thumb-strip"></div>`;
+
+        card.querySelector('.remove-btn').addEventListener('click', () => {
+            card.style.animation = 'slideIn 0.2s ease reverse';
+            card.addEventListener('animationend', () => {
+                card.remove();
+                const i = cards.findIndex(c => c.el === card);
+                if (i >= 0) cards.splice(i, 1);
+                updateCombine();
+                fetch('/api/remove', {method:'POST', body: JSON.stringify({id: data.id})});
+            });
+        });
+
+        const input = card.querySelector('.page-spec-input');
+        input.addEventListener('input', () => { validateInput(input); updateCombine(); syncThumbs(card); });
+
+        pdfList.appendChild(card);
+        cards.push({...data, el: card});
+        updateCombine();
+        renderThumbs(data.id, data.num_pages, card.querySelector('.thumb-strip'), card);
+    }
+
+    // ── SortableJS ────────────────────────────────────────────────────
+    if (typeof Sortable !== 'undefined') {
+        new Sortable(pdfList, {
+            handle: '.drag-handle', animation: 200, ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            onEnd: () => {
+                // Sync cards array with DOM order
+                const ids = [...pdfList.children].map(el => el.dataset.id);
+                cards.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+                updateCombine();
+            }
+        });
+    }
+
+    // ── Thumbnails ────────────────────────────────────────────────────
+    async function renderThumbs(fileId, numPages, container, card) {
+        const max = Math.min(numPages, 40);
+        const usePdfJs = typeof pdfjsLib !== 'undefined';
+        let pdf;
+        if (usePdfJs) {
+            try { pdf = await pdfjsLib.getDocument('/api/pdf/' + fileId).promise; }
+            catch { pdf = null; }
+        }
+
+        for (let i = 1; i <= max; i++) {
+            const thumb = document.createElement('div');
+            thumb.className = 'page-thumb selected';
+            thumb.dataset.page = i;
+
+            if (pdf) {
+                try {
+                    const page = await pdf.getPage(i);
+                    const vp = page.getViewport({scale: 0.2});
+                    const canvas = document.createElement('canvas');
+                    canvas.width = vp.width; canvas.height = vp.height;
+                    await page.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise;
+                    thumb.appendChild(canvas);
+                } catch { /* fall through to number */ }
+            }
+
+            if (!thumb.querySelector('canvas')) {
+                const span = document.createElement('span');
+                span.className = 'pn-only'; span.textContent = i;
+                thumb.appendChild(span);
+            }
+
+            const pn = document.createElement('div');
+            pn.className = 'pn'; pn.textContent = i;
+            thumb.appendChild(pn);
+
+            thumb.addEventListener('click', () => toggleThumbPage(thumb, card));
+            container.appendChild(thumb);
+        }
+        if (numPages > max) {
+            const more = document.createElement('div');
+            more.className = 'page-thumb';
+            more.innerHTML = '<span class="pn-only">+' + (numPages - max) + '</span>';
+            more.style.cursor = 'default';
+            container.appendChild(more);
+        }
+    }
+
+    function toggleThumbPage(thumb, card) {
+        const input = card.querySelector('.page-spec-input');
+        const total = +input.dataset.total;
+        const pageNum = +thumb.dataset.page;
+        const spec = input.value.trim();
+        let selected = parseSpec(spec, total);
+
+        if (selected.has(pageNum)) { selected.delete(pageNum); }
+        else { selected.add(pageNum); }
+
+        // Compress to spec string
+        if (selected.size === total) { input.value = ''; }
+        else {
+            const sorted = [...selected].sort((a,b) => a - b);
+            const ranges = []; let i = 0;
+            while (i < sorted.length) {
+                let j = i;
+                while (j + 1 < sorted.length && sorted[j+1] === sorted[j] + 1) j++;
+                if (j > i) ranges.push(sorted[i] + '-' + sorted[j]);
+                else ranges.push('' + sorted[i]);
+                i = j + 1;
+            }
+            input.value = ranges.join(',');
+        }
+        validateInput(input); updateCombine(); syncThumbs(card);
+    }
+
+    function syncThumbs(card) {
+        const input = card.querySelector('.page-spec-input');
+        const total = +input.dataset.total;
+        const selected = parseSpec(input.value.trim(), total);
+        card.querySelectorAll('.page-thumb[data-page]').forEach(t => {
+            t.classList.toggle('selected', selected.has(+t.dataset.page));
+        });
+    }
+
+    // ── Combine button ────────────────────────────────────────────────
+    function updateCombine() {
+        const hasCards = cards.length > 0;
+        combineSection.style.display = hasCards ? '' : 'none';
+        if (!hasCards) return;
+
+        let total = 0, valid = true;
+        for (const c of cards) {
+            const input = c.el.querySelector('.page-spec-input');
+            if (!validateInput(input)) { valid = false; continue; }
+            total += countSpec(input.value, c.num_pages);
+        }
+        combineSummary.textContent = total + ' page' + (total !== 1 ? 's' : '') + ' total';
+        combineBtn.disabled = !valid || total === 0;
+    }
+
+    combineBtn.addEventListener('click', async () => {
+        combineBtn.disabled = true;
+        combineBtn.innerHTML = '<span class="spinner"></span>Combining…';
+
+        const domOrder = [...pdfList.children];
+        const entries = domOrder.map(el => {
+            const id = el.dataset.id;
+            const spec = el.querySelector('.page-spec-input').value.trim();
+            return {id, pages: spec};
+        });
+
+        try {
+            const r = await fetch('/api/combine', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({entries})
+            });
+            if (!r.ok) {
+                const err = await r.json();
+                toast(err.error || 'Combine failed', true);
+                return;
+            }
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'combined.pdf';
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+            toast('✓ PDF downloaded!');
+        } catch (e) {
+            toast('Combine failed: ' + e.message, true);
+        } finally {
+            combineBtn.disabled = false;
+            combineBtn.textContent = 'Combine & Download';
+            updateCombine();
+        }
+    });
+    </script>
+</body>
+</html>

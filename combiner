@@ -103,6 +103,11 @@ def parse_args(args: list[str]) -> list[tuple[str, str | None]]:
 
 
 def main() -> None:
+    if "--gui" in sys.argv:
+        from gui import run_gui
+        run_gui()
+        return
+
     if len(sys.argv) < 2:
         print(__doc__.strip())
         sys.exit(1)
