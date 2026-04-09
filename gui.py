@@ -26,6 +26,8 @@ uploaded = {}  # id -> {path, name, num_pages}
 last_heartbeat = time.time()
 
 STATIC_DIR = Path(__file__).parent / "static"
+LOCKFILE = Path(tempfile.gettempdir()) / "pdfcombiner.lock"
+HEARTBEAT_TIMEOUT = 300  # 5 minutes
 
 
 # ── Page spec parsing (shared logic with CLI) ─────────────────────────
@@ -193,9 +195,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 # ── Heartbeat watchdog ─────────────────────────────────────────────────
 def watchdog():
     while True:
-        time.sleep(5)
-        if time.time() - last_heartbeat > 15:
-            print("\n⏹  No browser activity. Shutting down.")
+        time.sleep(10)
+        elapsed = time.time() - last_heartbeat
+        if elapsed > HEARTBEAT_TIMEOUT:
+            print(f"\n⏹  No browser activity for {HEARTBEAT_TIMEOUT}s. Shutting down.")
             cleanup()
             os._exit(0)
 
@@ -203,11 +206,49 @@ def watchdog():
 def cleanup():
     if upload_dir and os.path.isdir(upload_dir):
         shutil.rmtree(upload_dir, ignore_errors=True)
+    try:
+        LOCKFILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+# ── Session detection ──────────────────────────────────────────────────
+def _check_existing_session() -> str | None:
+    """Return the URL of a running session, or None."""
+    if not LOCKFILE.exists():
+        return None
+    try:
+        content = LOCKFILE.read_text().strip()
+        pid_str, url = content.split("\n", 1)
+        pid = int(pid_str)
+        # Check if process is still alive
+        os.kill(pid, 0)
+        # Check if server actually responds
+        import urllib.request
+        resp = urllib.request.urlopen(url + "/api/heartbeat", timeout=2)
+        if resp.status == 200:
+            return url
+    except (ValueError, OSError, Exception):
+        # Stale lockfile or dead process
+        LOCKFILE.unlink(missing_ok=True)
+    return None
+
+
+def _write_lockfile(port: int) -> None:
+    LOCKFILE.write_text(f"{os.getpid()}\nhttp://127.0.0.1:{port}")
 
 
 # ── Entry point ────────────────────────────────────────────────────────
 def run_gui():
     global upload_dir, last_heartbeat
+
+    # Check for an already-running session
+    existing_url = _check_existing_session()
+    if existing_url:
+        print(f"✦ PDF Combiner is already running")
+        print(f"  → {existing_url}")
+        webbrowser.open(existing_url)
+        return
 
     upload_dir = tempfile.mkdtemp(prefix="pdfcombiner_")
     last_heartbeat = time.time()
@@ -219,6 +260,7 @@ def run_gui():
     sock.close()
 
     server = http.server.HTTPServer(("127.0.0.1", port), Handler)
+    _write_lockfile(port)
 
     try:
         signal.signal(signal.SIGINT, lambda *_: (print("\n⏹  Shutting down."), cleanup(), sys.exit(0)))
@@ -230,7 +272,7 @@ def run_gui():
     url = f"http://127.0.0.1:{port}"
     print(f"✦ PDF Combiner GUI")
     print(f"  → {url}")
-    print(f"  (auto-shuts down when you close the tab)")
+    print(f"  (auto-shuts down after {HEARTBEAT_TIMEOUT // 60}min of inactivity)")
 
     webbrowser.open(url)
     server.serve_forever()
