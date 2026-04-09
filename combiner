@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""
+PDF Combiner — stitch together pages from multiple PDFs.
+
+Usage:
+    ./combiner pdf1.pdf 1,2-3,5,4 pdf2.pdf 4-5 pdf3.pdf 3-8 pdf1.pdf 6 pdf4.pdf
+
+Arguments are positional pairs of <file> [page-spec]:
+  - A page-spec is a comma-separated list of page numbers or ranges (1-indexed).
+    Examples: "1,2-3,5,4"  "4-5"  "6"
+  - If no page-spec follows a file (i.e. the next arg is another .pdf or end of args),
+    all pages of that file are included.
+  - The same file may appear multiple times.
+
+Output:
+    combined.pdf  (in the current directory)
+"""
+
+import sys
+import os
+import re
+from pypdf import PdfReader, PdfWriter
+
+
+def parse_page_spec(spec: str, total_pages: int) -> list[int]:
+    """
+    Parse a page specification string into a list of 0-indexed page numbers.
+
+    Accepts comma-separated tokens, each being either:
+      - a single page number  (e.g. "5")
+      - a range               (e.g. "2-7")
+
+    Pages are 1-indexed in the spec, converted to 0-indexed internally.
+    """
+    pages: list[int] = []
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+
+        m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", token)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+            if start < 1 or end < 1:
+                print(f"Error: page numbers must be ≥ 1, got '{token}'", file=sys.stderr)
+                sys.exit(1)
+            if start > total_pages or end > total_pages:
+                print(
+                    f"Error: page range '{token}' exceeds total pages ({total_pages})",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if start <= end:
+                pages.extend(range(start - 1, end))  # ascending
+            else:
+                pages.extend(range(start - 1, end - 2, -1))  # descending
+        else:
+            try:
+                p = int(token)
+            except ValueError:
+                print(f"Error: invalid page spec token '{token}'", file=sys.stderr)
+                sys.exit(1)
+            if p < 1 or p > total_pages:
+                print(
+                    f"Error: page {p} out of range (file has {total_pages} pages)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            pages.append(p - 1)
+
+    return pages
+
+
+def is_pdf_file(arg: str) -> bool:
+    """Heuristic: an argument is a PDF filename if it ends with .pdf (case-insensitive)."""
+    return arg.lower().endswith(".pdf")
+
+
+def parse_args(args: list[str]) -> list[tuple[str, str | None]]:
+    """
+    Parse positional CLI args into a list of (filepath, page_spec_or_None).
+    """
+    entries: list[tuple[str, str | None]] = []
+    i = 0
+    while i < len(args):
+        filepath = args[i]
+        if not is_pdf_file(filepath):
+            print(f"Error: expected a PDF file, got '{filepath}'", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isfile(filepath):
+            print(f"Error: file not found: '{filepath}'", file=sys.stderr)
+            sys.exit(1)
+
+        # Check if next arg is a page spec (not a .pdf file)
+        if i + 1 < len(args) and not is_pdf_file(args[i + 1]):
+            entries.append((filepath, args[i + 1]))
+            i += 2
+        else:
+            entries.append((filepath, None))
+            i += 1
+
+    return entries
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        sys.exit(1)
+
+    # Allow an optional -o / --output flag; default to combined.pdf
+    args = sys.argv[1:]
+    output_path = "combined.pdf"
+
+    if "-o" in args:
+        idx = args.index("-o")
+        if idx + 1 >= len(args):
+            print("Error: -o requires an output filename", file=sys.stderr)
+            sys.exit(1)
+        output_path = args[idx + 1]
+        args = args[:idx] + args[idx + 2 :]
+    elif "--output" in args:
+        idx = args.index("--output")
+        if idx + 1 >= len(args):
+            print("Error: --output requires an output filename", file=sys.stderr)
+            sys.exit(1)
+        output_path = args[idx + 1]
+        args = args[:idx] + args[idx + 2 :]
+
+    entries = parse_args(args)
+
+    writer = PdfWriter()
+    total_added = 0
+
+    for filepath, page_spec in entries:
+        reader = PdfReader(filepath)
+        num_pages = len(reader.pages)
+
+        if page_spec is None:
+            # Include all pages
+            pages = list(range(num_pages))
+        else:
+            pages = parse_page_spec(page_spec, num_pages)
+
+        for page_idx in pages:
+            writer.add_page(reader.pages[page_idx])
+            total_added += 1
+
+        spec_display = page_spec if page_spec else f"all ({num_pages})"
+        print(f"  {filepath}: pages {spec_display}")
+
+    if total_added == 0:
+        print("Error: no pages selected", file=sys.stderr)
+        sys.exit(1)
+
+    writer.write(output_path)
+    print(f"\n✓ Wrote {total_added} pages → {output_path}")
+
+
+if __name__ == "__main__":
+    main()
