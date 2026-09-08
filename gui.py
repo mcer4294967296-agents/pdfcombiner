@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""PDF Combiner GUI — local web server with drag-and-drop interface."""
+"""PDF Combiner GUI — drag-and-drop web interface.
+
+Local use:   ./gui.py        (random port, opens a browser, exits when idle)
+Server use:  PDFCOMBINER_SERVER=1 PDFCOMBINER_PORT=10233 ./gui.py
+             (fixed port, headless, no idle shutdown; for systemd behind nginx)
+"""
 
 import http.server
 import io
@@ -28,6 +33,11 @@ last_heartbeat = time.time()
 STATIC_DIR = Path(__file__).parent / "static"
 LOCKFILE = Path(tempfile.gettempdir()) / "pdfcombiner.lock"
 HEARTBEAT_TIMEOUT = 300  # 5 minutes
+
+# Headless server mode (systemd behind a reverse proxy): fixed port, no browser,
+# no idle self-shutdown, no single-session lockfile.
+SERVER_MODE = os.environ.get("PDFCOMBINER_SERVER") == "1"
+ENV_PORT = int(os.environ.get("PDFCOMBINER_PORT") or 0)
 
 
 # ── Page spec parsing (shared logic with CLI) ─────────────────────────
@@ -242,39 +252,53 @@ def _write_lockfile(port: int) -> None:
 def run_gui():
     global upload_dir, last_heartbeat
 
-    # Check for an already-running session
-    existing_url = _check_existing_session()
-    if existing_url:
-        print(f"✦ PDF Combiner is already running")
-        print(f"  → {existing_url}")
-        webbrowser.open(existing_url)
-        return
+    if not SERVER_MODE:
+        # Reuse an already-running local session if there is one
+        existing_url = _check_existing_session()
+        if existing_url:
+            print(f"✦ PDF Combiner is already running")
+            print(f"  → {existing_url}")
+            webbrowser.open(existing_url)
+            return
 
     upload_dir = tempfile.mkdtemp(prefix="pdfcombiner_")
     last_heartbeat = time.time()
 
-    # Pick a free port
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
+    if ENV_PORT:
+        port = ENV_PORT
+    else:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
 
     server = http.server.HTTPServer(("127.0.0.1", port), Handler)
-    _write_lockfile(port)
+    if not SERVER_MODE:
+        _write_lockfile(port)
 
-    try:
-        signal.signal(signal.SIGINT, lambda *_: (print("\n⏹  Shutting down."), cleanup(), sys.exit(0)))
-    except ValueError:
-        pass  # not in main thread
+    def _shutdown(*_):
+        print("\n⏹  Shutting down.")
+        cleanup()
+        sys.exit(0)
 
-    threading.Thread(target=watchdog, daemon=True).start()
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(_sig, _shutdown)
+        except ValueError:
+            pass  # not in the main thread
+
+    if not SERVER_MODE:
+        threading.Thread(target=watchdog, daemon=True).start()
 
     url = f"http://127.0.0.1:{port}"
-    print(f"✦ PDF Combiner GUI")
-    print(f"  → {url}")
-    print(f"  (auto-shuts down after {HEARTBEAT_TIMEOUT // 60}min of inactivity)")
+    if SERVER_MODE:
+        print(f"✦ PDF Combiner (server mode) → {url}", flush=True)
+    else:
+        print(f"✦ PDF Combiner GUI")
+        print(f"  → {url}")
+        print(f"  (auto-shuts down after {HEARTBEAT_TIMEOUT // 60}min of inactivity)")
+        webbrowser.open(url)
 
-    webbrowser.open(url)
     server.serve_forever()
 
 
