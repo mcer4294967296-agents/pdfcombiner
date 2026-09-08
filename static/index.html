@@ -266,9 +266,6 @@
           combineBtn = $('combineBtn'), combineSummary = $('combineSummary'),
           toastEl = $('toast');
 
-    // ── Heartbeat ─────────────────────────────────────────────────────
-    setInterval(() => fetch('api/heartbeat').catch(()=>{}), 4000);
-
     // ── Toast ─────────────────────────────────────────────────────────
     let toastTimer;
     function toast(msg, isError) {

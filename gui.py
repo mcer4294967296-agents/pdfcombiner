@@ -28,11 +28,11 @@ from pypdf import PdfReader, PdfWriter
 # ── State ──────────────────────────────────────────────────────────────
 upload_dir = None
 uploaded = {}  # id -> {path, name, num_pages}
-last_heartbeat = time.time()
+last_activity = time.time()
 
 STATIC_DIR = Path(__file__).parent / "static"
 LOCKFILE = Path(tempfile.gettempdir()) / "pdfcombiner.lock"
-HEARTBEAT_TIMEOUT = 300  # 5 minutes
+IDLE_TIMEOUT = 900  # local mode: exit after 15 min with no requests
 
 # Headless server mode (systemd behind a reverse proxy): fixed port, no browser,
 # no idle self-shutdown, no single-session lockfile.
@@ -93,16 +93,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ── GET ────────────────────────────────────────────────────────────
     def do_GET(self):
-        global last_heartbeat
+        _touch()
         parsed = urlparse(self.path)
         path = parsed.path
 
         if path == "/":
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
-
-        elif path == "/api/heartbeat":
-            last_heartbeat = time.time()
-            self._send_json({"ok": True})
 
         elif path.startswith("/api/pdf/"):
             file_id = path.split("/")[-1]
@@ -116,6 +112,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ── POST ───────────────────────────────────────────────────────────
     def do_POST(self):
+        _touch()
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -202,13 +199,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_error(404, "Not found")
 
 
-# ── Heartbeat watchdog ─────────────────────────────────────────────────
+# ── Idle watchdog (local mode only) ───────────────────────────────────
+def _touch():
+    global last_activity
+    last_activity = time.time()
+
+
 def watchdog():
     while True:
         time.sleep(10)
-        elapsed = time.time() - last_heartbeat
-        if elapsed > HEARTBEAT_TIMEOUT:
-            print(f"\n⏹  No browser activity for {HEARTBEAT_TIMEOUT}s. Shutting down.")
+        if time.time() - last_activity > IDLE_TIMEOUT:
+            print(f"\n⏹  Idle for {IDLE_TIMEOUT // 60} min. Shutting down.")
             cleanup()
             os._exit(0)
 
@@ -235,7 +236,7 @@ def _check_existing_session() -> str | None:
         os.kill(pid, 0)
         # Check if server actually responds
         import urllib.request
-        resp = urllib.request.urlopen(url + "/api/heartbeat", timeout=2)
+        resp = urllib.request.urlopen(url, timeout=2)
         if resp.status == 200:
             return url
     except (ValueError, OSError, Exception):
@@ -250,7 +251,7 @@ def _write_lockfile(port: int) -> None:
 
 # ── Entry point ────────────────────────────────────────────────────────
 def run_gui():
-    global upload_dir, last_heartbeat
+    global upload_dir, last_activity
 
     if not SERVER_MODE:
         # Reuse an already-running local session if there is one
@@ -262,7 +263,7 @@ def run_gui():
             return
 
     upload_dir = tempfile.mkdtemp(prefix="pdfcombiner_")
-    last_heartbeat = time.time()
+    last_activity = time.time()
 
     if ENV_PORT:
         port = ENV_PORT
@@ -296,7 +297,7 @@ def run_gui():
     else:
         print(f"✦ PDF Combiner GUI")
         print(f"  → {url}")
-        print(f"  (auto-shuts down after {HEARTBEAT_TIMEOUT // 60}min of inactivity)")
+        print(f"  (auto-shuts down after {IDLE_TIMEOUT // 60} min idle)")
         webbrowser.open(url)
 
     server.serve_forever()
